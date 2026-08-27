@@ -1,4 +1,4 @@
-# CSRF: Vulnerable vs Protected
+# CSRF Demo: Vulnerable vs Protected
 
 A tiny, runnable demo of a Cross-Site Request Forgery (CSRF) vulnerability
 and how to fix it. No frameworks beyond Express, no build step — clone it,
@@ -41,17 +41,31 @@ csrf-demo/
 
 ## Running it locally
 
+Works the same on macOS, Linux, and **Windows** — the npm scripts below use
+[`cross-env`](https://www.npmjs.com/package/cross-env) internally so you
+never have to type shell-specific `VAR=value` syntax by hand.
+
 ### 1. Start the demo app
 
 ```bash
 cd server
 npm install
-MODE=vulnerable PORT=3000 node server.js
+npm run start:vulnerable
 ```
 
 Open **http://localhost:3000/login**, click "Log in as demo user," and
 you'll land on a dashboard showing an account email and a form to change
 it. This is the app we're attacking.
+
+> **Windows users:** if you previously tried running `MODE=vulnerable
+> PORT=3000 node server.js` directly and got `Invalid parameter`, that's
+> because that syntax is Unix-shell-only (bash/zsh). `npm run
+> start:vulnerable` works correctly in `cmd.exe`, PowerShell, and
+> Unix shells alike — always prefer the npm script.
+>
+> If you want to run it manually anyway: PowerShell uses
+> `$env:MODE="vulnerable"; $env:PORT="3000"; node server.js`, and `cmd.exe`
+> uses `set MODE=vulnerable&&set PORT=3000&&node server.js`.
 
 ### 2. Start the attacker site (in a second terminal)
 
@@ -60,7 +74,19 @@ cd attacker-site
 node serve.js
 ```
 
-This serves `attack.html` at **http://127.0.0.1:8080/attack.html**.
+This serves `attack.html` at **http://127.0.0.1:5500/attack.html**.
+
+> **Windows users:** if you get `EACCES: permission denied` on a port —
+> this is almost always Windows' dynamic "excluded port range" (used by
+> Hyper-V/WSL) grabbing that port out from under you, **not** an actual
+> permissions problem. You don't need to run as Administrator — just pick
+> a different port:
+> ```
+> PowerShell:   $env:PORT=5555; node serve.js
+> cmd.exe:      set PORT=5555&&node serve.js
+> ```
+> You can check which ranges Windows has reserved with:
+> `netsh interface ipv4 show excludedportrange protocol=tcp`
 
 > **Why `127.0.0.1` and not another `localhost` port?** Browsers define
 > "same site" by scheme + registrable domain — port numbers don't count.
@@ -72,7 +98,7 @@ This serves `attack.html` at **http://127.0.0.1:8080/attack.html**.
 ### 3. Run the attack
 
 With the app still logged in (in the same browser), open
-**http://127.0.0.1:8080/attack.html**. Then go back to
+**http://127.0.0.1:5500/attack.html**. Then go back to
 **http://localhost:3000/dashboard** and refresh.
 
 **In vulnerable mode, the email will have changed** — to
@@ -84,7 +110,7 @@ Stop the server (`Ctrl+C`) and restart it in protected mode:
 
 ```bash
 cd server
-MODE=protected PORT=3000 node server.js
+npm run start:protected
 ```
 
 Repeat steps 2–3. This time the dashboard email is unchanged, and if you
@@ -93,7 +119,7 @@ the malicious requests come back as `404` and `403`.
 
 ---
 
-## What actually changed between the two modes
+## Solution
 
 This demo deliberately layers in **three separate fixes**, because real
 CSRF protection is not one silver bullet — it's a combination of good
@@ -159,7 +185,188 @@ gets rejected outright — regardless of what the browser did with cookies.
 
 ---
 
-## Next steps
+## Learnings
+
+These are the questions worth being able to answer out loud, in your own
+words, after building this. Written as a Q&A because that's the format
+that actually surfaces gaps.
+
+### How does the attacker even send a request without knowing my password?
+
+```text
+1. User logs into the real website
+        ↓
+2. Browser receives a session cookie
+        ↓
+3. User visits an unrelated/malicious page (same browser, different tab)
+        ↓
+4. That page secretly makes a request to the real website
+        ↓
+5. Browser automatically attaches the user's cookie (if allowed to)
+        ↓
+6. The real website thinks: "this is my logged-in user"
+```
+
+The attacker never sees the password or the cookie value. They don't need
+to — the *browser* attaches it for them. That's the entire trick.
+
+### Fix 1 — why does `GET` changing data matter so much?
+
+`GET` itself doesn't do anything by definition — the **server's own code**
+decides what a route does. The vulnerable demo has, conceptually:
+
+```js
+app.get("/account/email", (req, res) => {
+  // changes the email
+});
+```
+
+The problem is that `GET` requests are trivially easy for a browser to
+trigger without any user action — a plain `<img src="...">` tag causes
+one. So the fix isn't really "GET is insecure" — it's "an action that
+changes data must never be reachable by a request type designed to be
+triggered by accident." The rule of thumb:
+
+```text
+GET  → "Give me something"       (read-only, safe to trigger accidentally)
+POST → "I want to submit/change something"   (should require intent)
+```
+
+Switching to `POST` alone blocks the `<img>` trick specifically, but it is
+**not** a complete fix on its own — see Fix 2.
+
+### Fix 2 — what does `SameSite=Lax` actually do, mechanically?
+
+Think of the session cookie as a login pass the browser carries around.
+Without `SameSite` protection, the browser hands that pass to *any* site
+that asks, including a malicious one making a background request. With
+`SameSite=Lax` set:
+
+```text
+Attacker's site → request to real site
+        ↓
+Browser: "this request is coming from a different site"
+        ↓
+Don't attach the login cookie
+        ↓
+Real site sees an anonymous, logged-out request
+        ↓
+Rejected (or in this demo's case, redirected to /login)
+```
+
+The one exception baked into `Lax` (not `Strict`): normal top-level GET
+navigation, like clicking an ordinary link, still carries the cookie.
+That's precisely the gap Fix 1 has to close on its own — `SameSite=Lax`
+does not retroactively make a GET-based state change safe.
+
+### Fix 3 — is a CSRF token the same idea as a JWT?
+
+No, even though both get called "tokens." A JWT answers *"who is this
+user?"* — it's an identity/claims credential. A CSRF token answers a
+completely different question: *"did this specific request actually come
+from my own form?"*
+
+```text
+At login:
+  server generates a random value → stores it in the session
+
+In the real form:
+  <input type="hidden" name="csrfToken" value="...">
+
+On submit:
+  server compares the submitted token to the one in the session
+  match  → allow
+  no match / missing → reject (403)
+```
+
+An attacker's forged request has no way to know this value — it isn't
+derivable from the cookie, the URL, or anything visible to another site —
+so it arrives with a missing or wrong token and gets rejected regardless
+of what happened with cookies.
+
+### Summary of all three
+
+```text
+Fix 1 (no GET for actions)   → protects the HTTP method
+Fix 2 (SameSite=Lax)         → protects the cookie
+Fix 3 (CSRF token)           → verifies the request itself
+```
+
+Each one closes a gap the other two don't cover — that's why the demo
+implements all three rather than picking a "best" one.
+
+---
+
+## Troubleshooting Log
+
+Real issues hit while running this on Windows, kept here so the fixes
+are documented instead of lost in a chat log.
+
+### Issue: `Invalid parameter - =vulnerable` on Windows
+
+**Command that failed:**
+```
+MODE=vulnerable PORT=3000 node server.js
+```
+
+**Cause:** that `VAR=value` syntax is Unix-shell-only (bash/zsh). In
+`cmd.exe`, Windows tried to run a program literally named `MODE=vulnerable`
+and failed.
+
+**Fix:** added `cross-env` as a dependency and two npm scripts
+(`start:vulnerable`, `start:protected`) to `server/package.json`, so the
+same command works identically on Windows, macOS, and Linux:
+```bash
+npm run start:vulnerable
+npm run start:protected
+```
+
+### Issue: `EACCES: permission denied 127.0.0.1:8080`
+
+**Cause:** not an actual permissions problem — Windows dynamically
+reserves TCP port ranges for Hyper-V/WSL, and `8080` is a common casualty.
+Running as Administrator does not fix this; the port is simply
+unavailable for that session.
+
+**Fix:** changed the attacker site's default port from `8080` to `5500`,
+and made it overridable via `PORT=xxxx node serve.js` (or
+`$env:PORT=5555; node serve.js` in PowerShell) if `5500` is ever also
+reserved. Added a clearer error message in `serve.js` pointing this out
+if it happens again. Reserved ranges can be inspected with:
+```
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+### Issue: ran the "protected" attack, but saw `302 → 200`, not `404`/`403`
+
+**Symptom:** DevTools Network tab showed the forged request to
+`/account/email` return `302`, followed by `dashboard?updated=1` returning
+`200` — i.e. the attack silently succeeded even though "protected mode"
+was expected.
+
+**Cause:** the server code defaults to vulnerable mode whenever `MODE`
+isn't set to exactly `"protected"`:
+```js
+const MODE = process.env.MODE === "protected" ? "protected" : "vulnerable";
+```
+Running `node server.js` directly (instead of the npm script) leaves
+`MODE` unset, so the server silently starts in vulnerable mode — no error,
+no warning, just the wrong build running.
+
+**How to confirm which mode is actually running, going forward:**
+1. The colored badge at the top of every page: 🔴 `MODE: VULNERABLE` vs
+   🟢 `MODE: PROTECTED`.
+2. The startup log line printed in the terminal:
+   `CSRF demo running in VULNERABLE mode` / `...PROTECTED mode`.
+
+**Fix:** always start the server via the npm scripts
+(`npm run start:vulnerable` / `npm run start:protected`), never
+`node server.js` directly, unless `MODE` is being set another way you've
+verified.
+
+---
+
+## Next Steps
 
 This demo isolates CSRF specifically. A real account-email-change
 endpoint should also have, independent of CSRF protection:
