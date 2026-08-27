@@ -1,0 +1,17 @@
+{
+  "name": "csrf-demo-server",
+  "version": "1.0.0",
+  "description": "A small Express app used to demonstrate a CSRF vulnerability and then fix it with SameSite cookies + a synchronizer CSRF token.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:vulnerable": "cross-env MODE=vulnerable PORT=3000 node server.js",
+    "start:protected": "cross-env MODE=protected PORT=3000 node server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "cross-env": "^7.0.3",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  }
+}
