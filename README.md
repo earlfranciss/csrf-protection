@@ -11,7 +11,7 @@ run two commands, and watch a real attack succeed, then fail.
 
 ---
 
-## What is CSRF, in one paragraph
+## What is CSRF?
 
 When you log into a site, your browser holds a cookie that proves who you
 are, and it attaches that cookie to *every* request to that site —
@@ -159,7 +159,7 @@ gets rejected outright — regardless of what the browser did with cookies.
 
 ---
 
-## What a real production app would add on top of this
+## Next steps
 
 This demo isolates CSRF specifically. A real account-email-change
 endpoint should also have, independent of CSRF protection:
